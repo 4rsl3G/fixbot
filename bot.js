@@ -47,7 +47,7 @@ const getDashboardUI = async (ctx) => {
     const userData = await dbGet('SELECT * FROM users WHERE user_id = ?', [ctx.from.id]);
     
     // Tampilan ala Terminal / Enterprise SaaS
-    let text = `<b>⌬ PANSA WORKSPACE | SENDER ⌬</b>\n` +
+    let text = `<b>⌬ FIX MERAH | PANSA GROUP ⌬</b>\n` +
                `━━━━━━━━━━━━━━━━━━━━━━\n` +
                `<b>[ SYSTEM STATUS ]</b>\n` +
                `⊛ Status  : ${userData?.email_user ? '🟢 <i>Active & Ready</i>' : '🔴 <i>Awaiting Setup</i>'}\n` +
@@ -58,7 +58,7 @@ const getDashboardUI = async (ctx) => {
     
     // Layout Tombol Modern: 1 Primary (Lebar), 2 Secondary (Grid 2x2)
     const keyboard = Markup.inlineKeyboard([
-        [Markup.button.callback('⚡ EXECUTE BANDING', 'MENU_KIRIM')],
+        [Markup.button.callback('⚡ FIX MERAH', 'MENU_KIRIM')],
         [
             Markup.button.callback('⚙️ Setup Gateway', 'MENU_SETUP'),
             Markup.button.callback('🛡️ System Info', 'MENU_INFO')
