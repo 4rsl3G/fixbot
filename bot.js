@@ -60,25 +60,52 @@ const getMailHosts = (email) => {
 const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
 // ==========================================
-// 3. FIX MERAH DASHBOARD UI
+// 3. UI ENGINE (ANTI-STACKING)
 // ==========================================
 const bot = new Telegraf(process.env.BOT_TOKEN);
-const dashboardMsgId = new Map();
 
-const getDashboardUI = async (ctx) => {
+// Fungsi cerdas untuk memastikan selalu mengedit 1 pesan yang sama
+const updateUI = async (ctx, text, keyboardLayout = []) => {
+    const markup = keyboardLayout.length > 0 ? Markup.inlineKeyboard(keyboardLayout) : undefined;
+    let msgId = ctx.session?.uiMsgId;
+
+    // Jika dipicu dari klik tombol, update ID pesan terakhir
+    if (ctx.callbackQuery?.message?.message_id) {
+        msgId = ctx.callbackQuery.message.message_id;
+        if (ctx.session) ctx.session.uiMsgId = msgId;
+    }
+
+    try {
+        if (msgId) {
+            await ctx.telegram.editMessageText(ctx.chat.id, msgId, null, text, { parse_mode: 'HTML', ...markup });
+        } else {
+            const msg = await ctx.reply(text, { parse_mode: 'HTML', ...markup });
+            if (ctx.session) ctx.session.uiMsgId = msg.message_id;
+        }
+    } catch (error) {
+        // Abaikan error jika teks sama persis
+        if (error.description && error.description.includes('message is not modified')) return;
+        
+        // Jika pesan sebelumnya terhapus, kirim ulang sebagai *fallback*
+        const msg = await ctx.reply(text, { parse_mode: 'HTML', ...markup });
+        if (ctx.session) ctx.session.uiMsgId = msg.message_id;
+    }
+};
+
+const showDashboard = async (ctx) => {
     const userData = await dbGet('SELECT * FROM users WHERE user_id = ?', [ctx.from.id]);
     const lang = userData?.lang_code || 'ID';
     
-    let text = `<b>⌬ FIX MERAH | COMMAND CENTER ⌬</b>\n` +
-               `━━━━━━━━━━━━━━━━━━━━━━\n` +
-               `<b>[ NODE STATUS ]</b>\n` +
-               `⊛ Security : 🟢 <i>Encrypted</i>\n` +
-               `⊛ Account  : <code>${userData?.email_user || 'UNCONFIGURED'}</code>\n` +
-               `⊛ Template : <b>${templates[lang].name}</b>\n` +
-               `━━━━━━━━━━━━━━━━━━━━━━\n` +
-               `<i>Awaiting transmission request...</i>`;
+    const text = `<b>⌬ FIX MERAH | COMMAND CENTER ⌬</b>\n` +
+                 `━━━━━━━━━━━━━━━━━━━━━━\n` +
+                 `<b>[ NODE STATUS ]</b>\n` +
+                 `⊛ Security : 🟢 <i>Encrypted</i>\n` +
+                 `⊛ Account  : <code>${userData?.email_user || 'UNCONFIGURED'}</code>\n` +
+                 `⊛ Template : <b>${templates[lang].name}</b>\n` +
+                 `━━━━━━━━━━━━━━━━━━━━━━\n` +
+                 `<i>Awaiting transmission request...</i>`;
     
-    const keyboard = Markup.inlineKeyboard([
+    const keyboard = [
         [Markup.button.callback('⚡ EXECUTE FIX NOMOR', 'MENU_KIRIM')],
         [
             Markup.button.callback('⚙️ Gateway', 'MENU_SETUP'),
@@ -88,24 +115,9 @@ const getDashboardUI = async (ctx) => {
             Markup.button.callback('🗑️ Purge', 'MENU_RESET'),
             Markup.button.callback('💎 License', 'MENU_PREMIUM')
         ]
-    ]);
+    ];
 
-    return { text, keyboard };
-};
-
-const renderDashboard = async (ctx) => {
-    const ui = await getDashboardUI(ctx);
-    const userId = ctx.from.id;
-
-    if (dashboardMsgId.has(userId)) {
-        try {
-            await ctx.telegram.editMessageText(ctx.chat.id, dashboardMsgId.get(userId), null, ui.text, { parse_mode: 'HTML', ...ui.keyboard });
-            return;
-        } catch (e) {}
-    }
-
-    const msg = await ctx.reply(ui.text, { parse_mode: 'HTML', ...ui.keyboard });
-    dashboardMsgId.set(userId, msg.message_id);
+    await updateUI(ctx, text, keyboard);
 };
 
 // ==========================================
@@ -115,16 +127,14 @@ const renderDashboard = async (ctx) => {
 const setupWizard = new Scenes.WizardScene(
     'SETUP_WIZARD',
     async (ctx) => {
-        const text = `<b>[ INITIALIZE GATEWAY ]</b>\n━━━━━━━━━━━━━━━━━━━━━━\n> Enter your <b>Email Address</b>:\n\n<i>*Auto-delete active</i>`;
-        await ctx.telegram.editMessageText(ctx.chat.id, dashboardMsgId.get(ctx.from.id), null, text, { parse_mode: 'HTML', ...Markup.inlineKeyboard([[Markup.button.callback('✖️ Cancel Operation', 'BACK')]]) }).catch(()=>{});
+        await updateUI(ctx, `<b>[ INITIALIZE GATEWAY ]</b>\n━━━━━━━━━━━━━━━━━━━━━━\n> Enter your <b>Email Address</b>:\n\n<i>*Auto-delete active</i>`, [[Markup.button.callback('✖️ Cancel Operation', 'CANCEL')]]);
         return ctx.wizard.next();
     },
     async (ctx) => {
         if (ctx.message?.text) {
             await ctx.deleteMessage().catch(() => {}); 
             ctx.scene.state.email = ctx.message.text.trim();
-            const text = `<b>[ AUTHENTICATION ]</b>\n━━━━━━━━━━━━━━━━━━━━━━\nTarget: <code>${ctx.scene.state.email}</code>\n\n> Enter <b>App Password</b>:`;
-            await ctx.telegram.editMessageText(ctx.chat.id, dashboardMsgId.get(ctx.from.id), null, text, { parse_mode: 'HTML', ...Markup.inlineKeyboard([[Markup.button.callback('✖️ Cancel Operation', 'BACK')]]) }).catch(()=>{});
+            await updateUI(ctx, `<b>[ AUTHENTICATION ]</b>\n━━━━━━━━━━━━━━━━━━━━━━\nTarget: <code>${ctx.scene.state.email}</code>\n\n> Enter <b>App Password</b>:`, [[Markup.button.callback('✖️ Cancel Operation', 'CANCEL')]]);
             return ctx.wizard.next();
         }
     },
@@ -139,11 +149,12 @@ const setupWizard = new Scenes.WizardScene(
                     'INSERT INTO users (user_id, email_user, email_pass, imap_host, smtp_host) VALUES (?, ?, ?, ?, ?) ON CONFLICT(user_id) DO UPDATE SET email_user=excluded.email_user, email_pass=excluded.email_pass, imap_host=excluded.imap_host, smtp_host=excluded.smtp_host',
                     [ctx.from.id, ctx.scene.state.email, ctx.scene.state.pass, hosts.imap, hosts.smtp]
                 );
-                await ctx.telegram.editMessageText(ctx.chat.id, dashboardMsgId.get(ctx.from.id), null, `✅ <b>[ SUCCESS ]</b> Node Secured.`, { parse_mode: 'HTML' }).catch(()=>{});
+                await updateUI(ctx, `✅ <b>[ SUCCESS ]</b> Node Secured.`);
                 await delay(2000);
-                return cancelOperation(ctx);
+                await ctx.scene.leave();
+                return showDashboard(ctx);
             } else {
-                await ctx.telegram.editMessageText(ctx.chat.id, dashboardMsgId.get(ctx.from.id), null, `🌐 <b>[ CUSTOM SMTP ]</b>\n> Enter <b>SMTP Host</b> (e.g. smtp.hostinger.com):`, { parse_mode: 'HTML', ...Markup.inlineKeyboard([[Markup.button.callback('✖️ Cancel', 'BACK')]]) }).catch(()=>{});
+                await updateUI(ctx, `🌐 <b>[ CUSTOM SMTP ]</b>\n> Enter <b>SMTP Host</b> (e.g. smtp.hostinger.com):`, [[Markup.button.callback('✖️ Cancel', 'CANCEL')]]);
                 return ctx.wizard.next();
             }
         }
@@ -155,9 +166,10 @@ const setupWizard = new Scenes.WizardScene(
                 'INSERT INTO users (user_id, email_user, email_pass, imap_host, smtp_host) VALUES (?, ?, ?, ?, ?) ON CONFLICT(user_id) DO UPDATE SET email_user=excluded.email_user, email_pass=excluded.email_pass, imap_host=excluded.imap_host, smtp_host=excluded.smtp_host',
                 [ctx.from.id, ctx.scene.state.email, ctx.scene.state.pass, 'custom-imap', ctx.message.text.trim()]
             );
-            await ctx.telegram.editMessageText(ctx.chat.id, dashboardMsgId.get(ctx.from.id), null, '✅ <b>[ SUCCESS ]</b> Custom node secured.', { parse_mode: 'HTML' }).catch(()=>{});
+            await updateUI(ctx, `✅ <b>[ SUCCESS ]</b> Custom node secured.`);
             await delay(2000);
-            return cancelOperation(ctx);
+            await ctx.scene.leave();
+            return showDashboard(ctx);
         }
     }
 );
@@ -170,20 +182,25 @@ const kirimWizard = new Scenes.WizardScene(
             await ctx.answerCbQuery('⚠️ Configure Gateway First.', { show_alert: true });
             return ctx.scene.leave();
         }
-        const text = `<b>[ TRANSMISSION SETUP ]</b>\n━━━━━━━━━━━━━━━━━━━━━━\n> Enter target <b>WhatsApp Number</b>:\n<i>Format: +628...</i>`;
-        await ctx.telegram.editMessageText(ctx.chat.id, dashboardMsgId.get(ctx.from.id), null, text, { parse_mode: 'HTML', ...Markup.inlineKeyboard([[Markup.button.callback('✖️ Abort', 'BACK')]]) }).catch(()=>{});
+        await updateUI(ctx, `<b>[ TRANSMISSION SETUP ]</b>\n━━━━━━━━━━━━━━━━━━━━━━\n> Enter target <b>WhatsApp Number</b>:\n<i>Format: +628...</i>`, [[Markup.button.callback('✖️ Abort Execution', 'CANCEL')]]);
         return ctx.wizard.next();
     },
     async (ctx) => {
         if (ctx.message?.text) {
             await ctx.deleteMessage().catch(() => {});
             const nomor = ctx.message.text.trim();
-            if (!/^\+\d+$/.test(nomor)) return;
+            
+            if (!/^\+\d+$/.test(nomor)) {
+                const err = await ctx.reply('⚠️ Invalid Format!');
+                await delay(1500);
+                await ctx.deleteMessage(err.message_id).catch(()=>{});
+                return; // Tetap di step ini
+            }
 
             const user = await dbGet('SELECT * FROM users WHERE user_id = ?', [ctx.from.id]);
             const template = templates[user.lang_code || 'ID'];
 
-            await ctx.telegram.editMessageText(ctx.chat.id, dashboardMsgId.get(ctx.from.id), null, '⏳ <i>[ EXECUTING ] Sending payload...</i>', { parse_mode: 'HTML' }).catch(()=>{});
+            await updateUI(ctx, `⏳ <i>[ EXECUTING ] Routing payload via SMTP...</i>`);
 
             const transporter = nodemailer.createTransport({
                 host: user.smtp_host,
@@ -200,31 +217,42 @@ const kirimWizard = new Scenes.WizardScene(
                     text: template.body(nomor)
                 });
                 await delay(3000);
-                await ctx.telegram.editMessageText(ctx.chat.id, dashboardMsgId.get(ctx.from.id), null, `✅ <b>[ COMPLETED ]</b>\nTransmitted via node ${user.lang_code}.`, { parse_mode: 'HTML' }).catch(()=>{});
+                await updateUI(ctx, `✅ <b>[ TRANSMISSION COMPLETE ]</b>\nPayload successfully delivered for <code>${nomor}</code>.`);
             } catch (e) {
-                await ctx.telegram.editMessageText(ctx.chat.id, dashboardMsgId.get(ctx.from.id), null, `❌ <b>[ FAILED ]</b>\n<code>${e.message}</code>`, { parse_mode: 'HTML' }).catch(()=>{});
+                await updateUI(ctx, `❌ <b>[ TRANSMISSION FAILED ]</b>\n<code>${e.message}</code>`);
             }
             
             await delay(3000);
-            return cancelOperation(ctx);
+            await ctx.scene.leave();
+            return showDashboard(ctx);
         }
     }
 );
 
-async function cancelOperation(ctx) {
-    await ctx.scene.leave();
-    return renderDashboard(ctx);
-}
-
 // ==========================================
 // 5. ROUTING & HANDLERS
 // ==========================================
-const stage = new Scenes.Stage([setupWizard, kirimWizard]);
+
+// PENTING: Session harus diregistrasi sebelum Stage!
 bot.use(session());
+bot.use((ctx, next) => {
+    if (!ctx.session) ctx.session = {};
+    return next();
+});
+
+const stage = new Scenes.Stage([setupWizard, kirimWizard]);
+
+// GLOBAL CANCEL HANDLER: Mencegah tombol cancel macet saat di dalam Scene
+stage.action('CANCEL', async (ctx) => {
+    await ctx.answerCbQuery('Operation Aborted.');
+    await ctx.scene.leave();
+    return showDashboard(ctx);
+});
+
 bot.use(stage.middleware());
 
-bot.start(renderDashboard);
-bot.command('menu', renderDashboard);
+bot.start(showDashboard);
+bot.command('menu', showDashboard);
 
 bot.action('MENU_SETUP', (ctx) => { ctx.answerCbQuery(); ctx.scene.enter('SETUP_WIZARD'); });
 bot.action('MENU_KIRIM', (ctx) => { ctx.answerCbQuery(); ctx.scene.enter('KIRIM_WIZARD'); });
@@ -234,34 +262,31 @@ bot.action('MENU_LANG', async (ctx) => {
     const buttons = Object.keys(templates).map(code => 
         [Markup.button.callback(templates[code].name, `SET_LANG_${code}`)]
     );
-    buttons.push([Markup.button.callback('⬅️ Back to Control', 'BACK')]);
-    await ctx.editMessageText(`<b>[ TEMPLATE CONFIG ]</b>\n━━━━━━━━━━━━━━━━━━━━━━\nSelect regional node language:`, { parse_mode: 'HTML', ...Markup.inlineKeyboard(buttons) });
+    buttons.push([Markup.button.callback('⬅️ Back to Control', 'CANCEL')]);
+    await updateUI(ctx, `<b>[ TEMPLATE CONFIG ]</b>\n━━━━━━━━━━━━━━━━━━━━━━\nSelect regional node language:`, buttons);
 });
 
 bot.action(/^SET_LANG_(.+)$/, async (ctx) => {
     const lang = ctx.match[1];
     await dbRun('UPDATE users SET lang_code = ? WHERE user_id = ?', [lang, ctx.from.id]);
-    ctx.answerCbQuery(`Node set to ${lang}`);
-    return renderDashboard(ctx);
+    ctx.answerCbQuery(`Template set to ${lang}`);
+    return showDashboard(ctx);
 });
 
 bot.action('MENU_RESET', async (ctx) => {
     await dbRun('DELETE FROM users WHERE user_id = ?', [ctx.from.id]);
     ctx.answerCbQuery('System Purged.', { show_alert: true });
-    return renderDashboard(ctx);
+    return showDashboard(ctx);
 });
 
 bot.action('MENU_PREMIUM', (ctx) => ctx.answerCbQuery('FIX MERAH PREMIUM ACTIVE', { show_alert: true }));
 
-// FIXED CANCEL HANDLER
-bot.action('BACK', async (ctx) => {
-    ctx.answerCbQuery('Action Aborted.');
-    return cancelOperation(ctx);
-});
-
+// Hapus pesan teks nyasar jika user ngetik di luar perintah bot
 bot.on('message', async (ctx, next) => {
     if (!ctx.scene.current) await ctx.deleteMessage().catch(() => {});
     return next();
 });
 
-bot.launch().then(() => console.log('🤖 [FIX MERAH] System Online.'));
+bot.launch().then(() => console.log('🤖 [FIX MERAH] Session Engine Online.'));
+process.once('SIGINT', () => bot.stop('SIGINT'));
+process.once('SIGTERM', () => bot.stop('SIGTERM'));
